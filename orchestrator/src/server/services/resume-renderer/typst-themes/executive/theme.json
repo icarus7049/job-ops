@@ -1,0 +1,7 @@
+{
+  "id": "executive",
+  "label": "Executive",
+  "description": "A restrained US Letter executive resume with serif body copy and deep-blue typographic hierarchy.",
+  "kind": "adapted",
+  "entrypoint": "main.typ"
+}

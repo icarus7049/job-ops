@@ -224,8 +224,9 @@ export const ReactiveResumeConfigPanel: React.FC<
             <p className="text-xs text-destructive">{typstThemeError}</p>
           ) : null}
           <p className="text-xs text-muted-foreground">
-            Classic mirrors the current resume density; Compact fits more
-            content on the page.
+            Choose Classic for balanced density, Compact for tighter output,
+            Clean Print CV for a package-backed layout, or Executive for a
+            US-Letter leadership resume.
           </p>
         </div>
       ) : null}

@@ -209,6 +209,12 @@ Notes:
 
 Typst themes are defined as folders under `orchestrator/src/server/services/resume-renderer/typst-themes`.
 
+Bundled choices include **Classic**, **Compact**, **Clean Print CV**, and
+**Executive**. Executive targets US Letter and uses a restrained single-column
+layout with a serif body, deep-blue headings, explicit core competencies, and
+running page headers/footers. It allows content to flow across pages instead of
+clipping tailored content to a fixed page count.
+
 Each theme folder contains:
 
 - `theme.json`: id, label, description, renderer kind, entrypoint, and native theme tokens
