@@ -258,6 +258,10 @@ describe("typst resume renderer", () => {
     expect(template).toContain('let sans = "DejaVu Sans"');
     expect(template).toContain('let serif = "Libertinus Serif"');
     expect(template).toContain("counter(page).final().first()");
+    expect(template).toContain("is-role-heading");
+    expect(template).toContain("has-role-headings and index == 0");
+    expect(template).toContain("role-heading(clean)");
+    expect(template).toContain("#set par(leading: 3.2pt, justify: false)");
     expect(template).not.toContain("overflow");
   });
 
@@ -527,6 +531,22 @@ describe("typst resume renderer", () => {
       await renderTypstPdf({
         document: {
           ...baseDocument,
+          experience: [
+            ...baseDocument.experience,
+            {
+              title: "Fidelity Investments",
+              subtitle:
+                "Senior Technology Leader / Vice President / Boston, MA & Merrimack, NH",
+              date: "2005 -- 2026",
+              bullets: [
+                "Progressive executive leadership across the full tenure.",
+                "#strong[Head of Engineering | 2019 -- 2025]",
+                "Led six teams and 40+ engineers.",
+                "#strong[Director of Architecture | 2012 -- 2019]",
+                "Modernized distributed financial platforms.",
+              ],
+            },
+          ],
           projects: [
             {
               title: "Enterprise Platform",
