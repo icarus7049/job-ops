@@ -33,34 +33,63 @@
 
 #let section-heading(title) = [
   #block(breakable: false)[
-    #v(7pt)
+    #v(8pt)
     #text(font: sans, size: 9.5pt, weight: "bold", tracking: 1.05pt, fill: accent)[#upper(title)]
-    #v(1.6pt)
+    #v(2.5pt)
     #line(length: 100%, stroke: 0.75pt + rule)
-    #v(4pt)
+    #v(5pt)
   ]
 ]
+
+#let is-role-heading(value) = value.trim().starts-with("#strong[")
+
+#let role-heading(value) = {
+  let clean = value.trim()
+  let inner = clean.slice(8, clean.len() - 1)
+  let parts = inner.split(" | ")
+  let role-title = parts.first()
+  let role-date = if parts.len() > 1 { parts.last() } else { "" }
+
+  block(breakable: false, above: 5pt, below: 3pt)[
+    #grid(
+      columns: (1fr, auto),
+      column-gutter: 12pt,
+      align: (left + horizon, right + horizon),
+      [#text(font: sans, size: 10pt, weight: "bold", fill: accent)[#markup-text(role-title)]],
+      [#if role-date != "" [#text(font: sans, size: 9pt, fill: ink-soft)[#markup-text(role-date)]]],
+    )
+  ]
+}
 
 #let bullets-of(entry) = {
   let bullets = list-of(entry.at("bullets", default: ()))
     .filter(item => text-of(item) != "")
+  let has-role-headings = false
   for item in bullets {
+    if is-role-heading(item) { has-role-headings = true }
+  }
+
+  for (index, item) in bullets.enumerate() {
     let clean = item.trim()
     if clean.starts-with("•") or clean.starts-with("-") {
       clean = clean.slice(1).trim()
     }
-    if clean.starts-with("#strong[") {
-      block(breakable: false, above: 1pt, below: 1.5pt)[
-        #text(font: sans, size: 9.25pt, weight: "bold", fill: accent)[#markup-text(clean)]
+    if is-role-heading(clean) {
+      role-heading(clean)
+    } else if has-role-headings and index == 0 {
+      block(breakable: false, above: 1pt, below: 5pt)[
+        #set text(size: 9.5pt, fill: ink-soft)
+        #set par(leading: 3pt)
+        #emph[#markup-text(clean)]
       ]
     } else {
-      block(breakable: false, above: 0pt, below: 1.5pt)[
+      block(breakable: false, above: 0pt, below: 2.5pt)[
         #grid(
-          columns: (10pt, 1fr),
-          column-gutter: 2.5pt,
+          columns: (9.5pt, 1fr),
+          column-gutter: 3pt,
           align: (left + top, left + top),
           [#text(fill: accent)[–]],
-          [#markup-text(clean)],
+          [#block[#markup-text(clean)]],
         )
       ]
     }
@@ -78,7 +107,7 @@
     .filter(value => value != "")
     .join(" · ")
 
-  block(breakable: not project, below: if project { 4.5pt } else { 6pt })[
+  block(breakable: not project, below: if project { 4.5pt } else { 8pt })[
     #block(breakable: false)[
       #grid(
         columns: (1fr, auto),
@@ -94,9 +123,9 @@
         [#text(font: sans, size: 8.8pt, weight: if project { "regular" } else { "bold" }, fill: ink-soft)[#date]],
       )
       #if subline != "" [
-        #v(1.2pt)
-        #text(font: sans, size: 9.25pt, weight: "bold", fill: accent)[#subline]
-        #v(2.2pt)
+        #v(2pt)
+        #text(font: sans, size: 10pt, weight: "bold", fill: accent)[#subline]
+        #v(3pt)
       ]
     ]
     #bullets-of(entry)
@@ -144,7 +173,7 @@
 
 #set page(
   paper: "us-letter",
-  margin: (top: 0.48in, right: 0.62in, bottom: 0.48in, left: 0.62in),
+  margin: (top: 0.48in, right: 0.62in, bottom: 0.58in, left: 0.62in),
   header: context {
     if counter(page).get().first() > 1 [
       #set text(font: sans, size: 7.5pt, fill: ink-mute, tracking: 0.45pt)
@@ -169,7 +198,7 @@
   ],
 )
 #set text(font: serif, size: 10pt, fill: ink, lang: "en")
-#set par(leading: 0.27em, justify: false)
+#set par(leading: 3.2pt, justify: false)
 #show link: set text(fill: accent)
 
 #block(breakable: false)[
