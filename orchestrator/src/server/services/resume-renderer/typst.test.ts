@@ -250,6 +250,17 @@ describe("typst resume renderer", () => {
     expect(template).toContain('link(text-of-item(entry, "url"))');
   });
 
+  it("exposes the executive theme's print and hierarchy tokens", async () => {
+    const template = await readTypstTemplate("executive");
+
+    expect(template).toContain('paper: "us-letter"');
+    expect(template).toContain('let accent = rgb("#22466a")');
+    expect(template).toContain('let sans = "DejaVu Sans"');
+    expect(template).toContain('let serif = "Libertinus Serif"');
+    expect(template).toContain("counter(page).final().first()");
+    expect(template).not.toContain("overflow");
+  });
+
   it("renders award-style sections as Typst bullet lists in clean-print-cv", async () => {
     const template = await readTypstTemplate("clean-print-cv");
 
@@ -497,6 +508,45 @@ describe("typst resume renderer", () => {
         outputPath,
         jobId: "job-render-clean-print-cv",
         typstTheme: "clean-print-cv",
+      });
+
+      const stats = spawnSync("sh", ["-lc", `test -s "${outputPath}"`], {
+        stdio: "ignore",
+      });
+      expect(stats.status).toBe(0);
+    },
+  );
+
+  it.skipIf(!typstAvailable())(
+    "renders the executive theme when typst is installed",
+    async () => {
+      const tempDir = await createTempDir();
+      tempDirs.push(tempDir);
+      const outputPath = join(tempDir, "executive.pdf");
+
+      await renderTypstPdf({
+        document: {
+          ...baseDocument,
+          projects: [
+            {
+              title: "Enterprise Platform",
+              subtitle: "Architecture modernization",
+              date: "2024",
+              bullets: ["Scaled a regulated platform."],
+            },
+          ],
+          education: [
+            {
+              title: "Example University",
+              subtitle: "B.S., Engineering",
+              date: "2000",
+              bullets: [],
+            },
+          ],
+        },
+        outputPath,
+        jobId: "job-render-executive",
+        typstTheme: "executive",
       });
 
       const stats = spawnSync("sh", ["-lc", `test -s "${outputPath}"`], {

@@ -173,6 +173,7 @@ Defaults and constraints:
 - When Typst is selected, choose a Typst theme:
   - Classic
   - Compact
+  - Executive: US Letter, deep-blue hierarchy, serif body copy, running page furniture, and an ATS-friendly single-column layout
 - JobOps uses the selected RxResume resume as the source of truth for import and project data
 - Invalid Reactive Resume credentials or other `4xx` config failures block the save and stay visible as an inline error
 - Temporary Reactive Resume downtime shows an inline warning, but the save still succeeds
