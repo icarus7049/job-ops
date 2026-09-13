@@ -7,12 +7,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        CLAUDE_CLI_VERSION: "2.1.268"
       secrets:
         - github_token
     image: ghcr.io/dakheera47/job-ops:latest
     container_name: job-ops
     ports:
-      - "3005:3001"
+      - "127.0.0.1:3005:3001"
     volumes:
       # Persist database and generated PDFs
       - ./data:/app/data
