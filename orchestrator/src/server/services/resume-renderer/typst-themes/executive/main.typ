@@ -8,6 +8,11 @@
 #let sans = "DejaVu Sans"
 #let serif = "Libertinus Serif"
 
+// Tracks the employer whose entries are currently being laid out, so a page
+// that continues mid-employer can name it in the running header instead of
+// starting with orphaned role titles.
+#let cur-employer = state("cur-employer", "")
+
 #let text-of(value) = if value == none { "" } else { value }
 #let list-of(value) = if value == none { () } else { value }
 #let text-of-item(item, key) = text-of(item.at(key, default: ""))
@@ -96,18 +101,24 @@
   }
 }
 
-#let entry-block(entry, project: false) = {
+#let entry-block(entry, project: false, track: false) = {
   let title = text-of-item(entry, "title")
   let url = text-of-item(entry, "url")
   let subtitle = text-of-item(entry, "subtitle")
   let secondary-title = text-of-item(entry, "secondaryTitle")
   let secondary-subtitle = text-of-item(entry, "secondarySubtitle")
   let date = text-of-item(entry, "date")
-  let subline = (subtitle, secondary-title, secondary-subtitle)
+  // join() on an empty array yields `none`, not "" — which both defeats an
+  // `!= ""` guard and renders as nothing, leaving an orphaned separator.
+  let subline-parts = (subtitle, secondary-title, secondary-subtitle)
     .filter(value => value != "")
-    .join(" · ")
+  let subline = if subline-parts.len() == 0 { "" } else { subline-parts.join(" · ") }
 
-  block(breakable: not project, below: if project { 4.5pt } else { 8pt })[
+  // Group separation must exceed the internal title→subline gap, or the
+  // subline reads as a heading for the NEXT entry rather than as attribution
+  // for its own.
+  block(breakable: not project, below: if project { 9pt } else { 8pt })[
+    #if track [#cur-employer.update(title)]
     #block(breakable: false)[
       #grid(
         columns: (1fr, auto),
@@ -119,10 +130,17 @@
           weight: "bold",
           tracking: if project { 0pt } else { 0.25pt },
           fill: ink,
-        )[#link-or-text(title, url)]],
+        )[#link-or-text(title, url)]#if project and subline.trim() != "" [
+          // Inline attribution. Stacked, the issuer sits equidistant between
+          // its own credential and the next one, so proximity cannot say which
+          // it belongs to. On the same line the association is unambiguous.
+          #text(font: sans, size: 8.6pt, weight: "regular", fill: ink-mute)[ · #subline]
+        ]],
         [#text(font: sans, size: 8.8pt, weight: if project { "regular" } else { "bold" }, fill: ink-soft)[#date]],
       )
-      #if subline != "" [
+      // Non-project entries keep the stacked accent subline (a role under an
+      // employer). Project entries render it inline above instead.
+      #if subline.trim() != "" and not project [
         #v(2pt)
         #text(font: sans, size: 10pt, weight: "bold", fill: accent)[#subline]
         #v(3pt)
@@ -132,10 +150,10 @@
   ]
 }
 
-#let entries-section(key, fallback, entries, project: false) = {
+#let entries-section(key, fallback, entries, project: false, track: false) = {
   if entries.len() > 0 [
     #section-heading(title-of(key, fallback))
-    #for entry in entries [#entry-block(entry, project: project)]
+    #for entry in entries [#entry-block(entry, project: project, track: track)]
   ]
 }
 
@@ -180,7 +198,12 @@
       #grid(
         columns: (1fr, auto),
         [#upper(text-of(source.at("name", default: "")))],
-        [EXECUTIVE RESUME — CONTINUED],
+        // Name the employer still in progress. Page 2 otherwise opens on bare
+        // role titles with no clue whose roles they are.
+        [#{
+          let emp = cur-employer.at(here())
+          if emp != "" [#upper(emp) — CONTINUED] else [EXECUTIVE RESUME — CONTINUED]
+        }],
       )
       #v(3pt)
       #line(length: 100%, stroke: 0.5pt + rule)
@@ -242,13 +265,16 @@
 
 #if core-groups.len() > 0 [
   #section-heading("Core Competencies")
-  #for (index, keyword) in list-of(core-groups.at(0).at("keywords", default: ())).enumerate() [
-    #if index > 0 [#h(2pt)#text(font: sans, weight: "bold", fill: accent)[|]#h(2pt)]
-    #keyword
+  #let core-keywords = list-of(core-groups.at(0).at("keywords", default: ()))
+  // The separator is glued to the keyword it follows inside a box, so a wrap
+  // can never start a line with an orphaned "|".
+  #for (index, keyword) in core-keywords.enumerate() [
+    #box[#keyword#if index < core-keywords.len() - 1 [#h(3pt)#text(font: sans, weight: "bold", fill: accent)[|]]]
+    #if index < core-keywords.len() - 1 [ ]
   ]
 ]
 
-#entries-section("experience", "Professional Experience", list-of(source.at("experience", default: ())))
+#entries-section("experience", "Professional Experience", list-of(source.at("experience", default: ())), track: true)
 #entries-section("projects", "Selected Projects", list-of(source.at("projects", default: ())), project: true)
 
 #line-section("skills", "Technology", technology-groups, group => [
