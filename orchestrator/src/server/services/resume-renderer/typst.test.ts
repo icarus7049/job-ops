@@ -255,14 +255,59 @@ describe("typst resume renderer", () => {
 
     expect(template).toContain('paper: "us-letter"');
     expect(template).toContain('let accent = rgb("#22466a")');
-    expect(template).toContain('let sans = "DejaVu Sans"');
-    expect(template).toContain('let serif = "Libertinus Serif"');
+    // Fonts are metric-compatible stand-ins for the reference design's
+    // Helvetica/Arial and Georgia; the exact families are asserted so a future
+    // edit cannot silently drop back to a font the image does not install.
+    expect(template).toContain('let sans = "Liberation Sans"');
+    expect(template).toContain('let serif = "Caladea"');
     expect(template).toContain("counter(page).final().first()");
     expect(template).toContain("is-role-heading");
     expect(template).toContain("has-role-headings and index == 0");
     expect(template).toContain("role-heading(clean)");
     expect(template).toContain("#set par(leading: 3.2pt, justify: false)");
     expect(template).not.toContain("overflow");
+  });
+
+  it("keeps the executive section-heading rhythm tight", async () => {
+    const template = await readTypstTemplate("executive");
+
+    // The pre-change rhythm (8pt above, 5pt below the rule) produced the
+    // oversized heading/underline/paragraph gap the human flagged. Assert the
+    // tightened values so a regression cannot silently reintroduce it.
+    const heading = template.slice(template.indexOf("#let section-heading"));
+    const body = heading.slice(0, heading.indexOf("#let is-role-heading"));
+    expect(body).toContain("#v(6pt)");
+    expect(body).toContain("#v(1.5pt)");
+    expect(body).toContain("#v(2pt)");
+    expect(body).not.toContain("#v(8pt)");
+    expect(body).not.toContain("#v(5pt)");
+  });
+
+  it("gives early-career roles a compact, muted treatment", async () => {
+    const template = await readTypstTemplate("executive");
+
+    expect(template).toContain("early-career-from");
+    expect(template).toContain("is-early(role-date)");
+    expect(template).toContain("fill: if early { ink-soft } else { accent }");
+  });
+
+  it("splits experience into a professional and an early-career section", async () => {
+    const template = await readTypstTemplate("executive");
+
+    // Early-career employers get their own heading, matching the reference
+    // design's "Early Career — Software Engineering" section.
+    expect(template).toContain("experience-sections");
+    expect(template).toContain("is-early-entry");
+    expect(template).toContain('title-of("earlyCareer"');
+    expect(template).toContain('"Early Career — Software Engineering"');
+    // An employer is early-career only if it ENDED before the cutoff, so a long
+    // tenure like Fidelity's "Mar 2005 - May 2026" is not misclassified.
+    expect(template).toContain("last-year-of");
+    expect(template).toContain("entry-early");
+    // The old single-section call must not remain, or experience would render twice.
+    expect(template).not.toContain(
+      '#entries-section("experience", "Professional Experience", list-of(source.at("experience", default: ())), track: true)',
+    );
   });
 
   it("renders award-style sections as Typst bullet lists in clean-print-cv", async () => {
