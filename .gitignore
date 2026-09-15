@@ -32,3 +32,7 @@ tmp/
 
 # Runtime storage artifacts
 orchestrator/storage
+
+# Local OpenClaw working artifacts for this repo (resume backups, theme proofs,
+# scratch patches). Repo-root scoped so it never masks a tracked .openclaw dir.
+/.openclaw/
