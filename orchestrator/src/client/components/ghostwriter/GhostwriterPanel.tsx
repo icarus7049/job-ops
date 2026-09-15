@@ -194,6 +194,7 @@ export const GhostwriterPanel: React.FC<GhostwriterPanelProps> = ({
               parentMessageId: null,
               activeChildId: null,
               attachments: [],
+              resumeEditProposal: null,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
             },
@@ -267,6 +268,7 @@ export const GhostwriterPanel: React.FC<GhostwriterPanelProps> = ({
         parentMessageId: null,
         activeChildId: null,
         attachments,
+        resumeEditProposal: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -413,6 +415,7 @@ export const GhostwriterPanel: React.FC<GhostwriterPanelProps> = ({
             parentMessageId: null,
             activeChildId: null,
             attachments,
+            resumeEditProposal: null,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           },
@@ -544,6 +547,68 @@ export const GhostwriterPanel: React.FC<GhostwriterPanelProps> = ({
     [job.id],
   );
 
+  /**
+   * Resolve a staged resume change set.
+   *
+   * Reloads messages afterwards so the card reflects the server's view of the
+   * proposal — including a revision conflict, where the resume is untouched
+   * and the proposal stays pending.
+   */
+  const resolveResumeEdit = useCallback(
+    async (
+      messageId: string,
+      action: (
+        jobId: string,
+        messageId: string,
+      ) => Promise<{ proposal: { status: string } }>,
+      successMessage: string,
+      errorMessage: string,
+    ) => {
+      try {
+        await action(job.id, messageId);
+        await loadMessages();
+        toast.success(successMessage);
+      } catch (error) {
+        showErrorToast(error, errorMessage);
+        await loadMessages();
+      }
+    },
+    [job.id, loadMessages],
+  );
+
+  const applyResumeEdit = useCallback(
+    (messageId: string) =>
+      resolveResumeEdit(
+        messageId,
+        api.applyJobGhostwriterResumeEdit,
+        "Resume updated",
+        "Failed to apply resume changes",
+      ),
+    [resolveResumeEdit],
+  );
+
+  const rejectResumeEdit = useCallback(
+    (messageId: string) =>
+      resolveResumeEdit(
+        messageId,
+        api.rejectJobGhostwriterResumeEdit,
+        "Proposed changes discarded",
+        "Failed to discard resume changes",
+      ),
+    [resolveResumeEdit],
+  );
+
+  const revertResumeEdit = useCallback(
+    (messageId: string) =>
+      resolveResumeEdit(
+        messageId,
+        api.revertJobGhostwriterResumeEdit,
+        "Resume change reverted",
+        "Failed to revert resume changes",
+      ),
+    [resolveResumeEdit],
+  );
+
   const canReset = useMemo(() => {
     return !isStreaming && messages.length > 0;
   }, [isStreaming, messages]);
@@ -614,6 +679,9 @@ export const GhostwriterPanel: React.FC<GhostwriterPanelProps> = ({
             onRegenerate={regenerate}
             onEdit={editMessage}
             onSwitchBranch={switchBranch}
+            onApplyResumeEdit={applyResumeEdit}
+            onRejectResumeEdit={rejectResumeEdit}
+            onRevertResumeEdit={revertResumeEdit}
           />
         )}
       </div>

@@ -43,6 +43,19 @@ import {
   type WritingStyle,
 } from "./writing-style";
 
+/**
+ * The complete Resume Studio document made available to Ghostwriter, with the
+ * revision it was read at. Present only when a resume exists and fits the
+ * context budget in full.
+ */
+export type JobChatResumeContext = {
+  documentId: string;
+  revision: number;
+  updatedAt: string;
+  /** The unreduced Resume Studio document, serialized verbatim. */
+  resumeJson: string;
+};
+
 export type JobChatPromptContext = {
   job: Job;
   style: WritingStyle;
@@ -52,6 +65,8 @@ export type JobChatPromptContext = {
   selectedNotesSnapshot: string;
   selectedEmailsSnapshot: string;
   selectedDocumentsSnapshot: string;
+  /** Null when no resume is available, or when it is too large to send whole. */
+  resume: JobChatResumeContext | null;
 };
 
 const MAX_JOB_DESCRIPTION = 6000;
@@ -65,6 +80,15 @@ const MAX_PROJECTS = 6;
 const MAX_EXPERIENCE = 5;
 const MAX_ITEM_TEXT = 500;
 const MAX_DOCUMENT_READ_BYTES = 2 * 1024 * 1024;
+/**
+ * Hard ceiling on the serialized resume sent to the model.
+ *
+ * This budget is never used to truncate. A resume edit is expressed as a JSON
+ * Pointer, and a pointer written against a partial document can silently
+ * target the wrong array index, so an oversized resume is dropped from the
+ * context entirely rather than trimmed.
+ */
+const MAX_RESUME_CONTEXT_CHARS = 120_000;
 
 const STOP_SLOP_GHOSTWRITER_PROMPT = `
 Stop Slop revision rules for Ghostwriter prose:
@@ -408,6 +432,47 @@ async function buildSystemPrompt(
   });
 }
 
+async function buildResumeContext(
+  jobId: string,
+): Promise<JobChatResumeContext | null> {
+  const { getCurrentDesignResumeOrNullOnLegacy } = await import(
+    "./design-resume"
+  );
+
+  let document: Awaited<
+    ReturnType<typeof getCurrentDesignResumeOrNullOnLegacy>
+  >;
+  try {
+    document = await getCurrentDesignResumeOrNullOnLegacy();
+  } catch (error) {
+    logger.warn("Failed to load Resume Studio for job chat context", {
+      jobId,
+      error: sanitizeUnknown(error),
+    });
+    return null;
+  }
+
+  if (!document) return null;
+
+  const resumeJson = JSON.stringify(document.resumeJson);
+  if (resumeJson.length > MAX_RESUME_CONTEXT_CHARS) {
+    logger.warn("Resume too large for Ghostwriter resume context", {
+      jobId,
+      documentId: document.id,
+      resumeChars: resumeJson.length,
+      maxResumeChars: MAX_RESUME_CONTEXT_CHARS,
+    });
+    return null;
+  }
+
+  return {
+    documentId: document.id,
+    revision: document.revision,
+    updatedAt: document.updatedAt,
+    resumeJson,
+  };
+}
+
 async function isStopSlopEnabled(): Promise<boolean> {
   const raw = await settingsRepo.getSetting("ghostwriterStopSlopEnabled");
   return (
@@ -446,12 +511,14 @@ export async function buildJobChatPromptContext(
     selectedNotesSnapshot,
     selectedEmailsSnapshot,
     selectedDocumentsSnapshot,
+    resume,
   ] = await Promise.all([
     buildSystemPrompt(style, profile, job.jobDescription),
     isStopSlopEnabled(),
     buildSelectedNotesSnapshot(jobId, selectedNoteIds),
     buildSelectedEmailsSnapshot(jobId, selectedEmailIds),
     buildSelectedDocumentsSnapshot(jobId, selectedDocumentIds),
+    buildResumeContext(jobId),
   ]);
   const systemPrompt = stopSlopEnabled
     ? `${baseSystemPrompt}\n\n${STOP_SLOP_GHOSTWRITER_PROMPT}`
@@ -478,6 +545,8 @@ export async function buildJobChatPromptContext(
         normalizeGhostwriterSelectedEmailIds(selectedEmailIds).length,
       selectedDocumentCount:
         normalizeGhostwriterSelectedDocumentIds(selectedDocumentIds).length,
+      resumeChars: resume?.resumeJson.length ?? 0,
+      resumeRevision: resume?.revision ?? null,
     }),
   });
 
@@ -490,5 +559,6 @@ export async function buildJobChatPromptContext(
     selectedNotesSnapshot,
     selectedEmailsSnapshot,
     selectedDocumentsSnapshot,
+    resume,
   };
 }

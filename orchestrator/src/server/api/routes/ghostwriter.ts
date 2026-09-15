@@ -1,8 +1,11 @@
 import { asyncRoute, fail, ok } from "@infra/http";
+import { logger } from "@infra/logger";
 import { runWithRequestContext } from "@infra/request-context";
 import { setupSse, writeSseData } from "@infra/sse";
 import { badRequest, toAppError } from "@server/infra/errors";
+import { enqueueAutoPdfRegenerationForReadyJobs } from "@server/services/auto-pdf-regeneration";
 import * as ghostwriterService from "@server/services/ghostwriter";
+import * as resumeEditService from "@server/services/ghostwriter-resume-edit";
 import { type Request, Router } from "express";
 import { z } from "zod";
 
@@ -93,6 +96,32 @@ function getJobId(req: Request): string {
     throw badRequest("Missing job id");
   }
   return jobId;
+}
+
+function getMessageId(req: Request): string {
+  const messageId = req.params.messageId;
+  if (!messageId) {
+    throw badRequest("Missing message id");
+  }
+  return messageId;
+}
+
+/**
+ * Mirrors the design-resume routes: tailored PDFs embed resume content, so a
+ * resume write has to invalidate them.
+ */
+function queueResumeEditAutoPdfRegeneration(route: string): void {
+  queueMicrotask(() => {
+    void enqueueAutoPdfRegenerationForReadyJobs({
+      reason: "design_resume_updated",
+      requestedBy: "user",
+    }).catch((error) => {
+      logger.warn(
+        "Failed to queue auto PDF regeneration for Ghostwriter resume edit",
+        { route, reason: "design_resume_updated", error },
+      );
+    });
+  });
 }
 
 ghostwriterRouter.get(
@@ -465,6 +494,84 @@ ghostwriterRouter.post(
         assistantMessage: result.assistantMessage,
         runId: result.runId,
       });
+    });
+  }),
+);
+
+ghostwriterRouter.get(
+  "/messages/:messageId/resume-edit",
+  asyncRoute(async (req, res) => {
+    const jobId = getJobId(req);
+    const messageId = getMessageId(req);
+
+    await runWithRequestContext({ jobId }, async () => {
+      const result = await resumeEditService.getResumeEditProposal({
+        jobId,
+        messageId,
+      });
+      ok(res, { proposal: result.proposal });
+    });
+  }),
+);
+
+ghostwriterRouter.post(
+  "/messages/:messageId/resume-edit/apply",
+  asyncRoute(async (req, res) => {
+    const jobId = getJobId(req);
+    const messageId = getMessageId(req);
+
+    await runWithRequestContext({ jobId }, async () => {
+      const result = await resumeEditService.applyResumeEditProposal({
+        jobId,
+        messageId,
+      });
+      ok(res, {
+        proposal: result.proposal,
+        message: result.message,
+        document: result.document,
+      });
+      queueResumeEditAutoPdfRegeneration(
+        "POST /api/jobs/:id/chat/messages/:messageId/resume-edit/apply",
+      );
+    });
+  }),
+);
+
+ghostwriterRouter.post(
+  "/messages/:messageId/resume-edit/reject",
+  asyncRoute(async (req, res) => {
+    const jobId = getJobId(req);
+    const messageId = getMessageId(req);
+
+    await runWithRequestContext({ jobId }, async () => {
+      const result = await resumeEditService.rejectResumeEditProposal({
+        jobId,
+        messageId,
+      });
+      ok(res, { proposal: result.proposal, message: result.message });
+    });
+  }),
+);
+
+ghostwriterRouter.post(
+  "/messages/:messageId/resume-edit/revert",
+  asyncRoute(async (req, res) => {
+    const jobId = getJobId(req);
+    const messageId = getMessageId(req);
+
+    await runWithRequestContext({ jobId }, async () => {
+      const result = await resumeEditService.revertResumeEditProposal({
+        jobId,
+        messageId,
+      });
+      ok(res, {
+        proposal: result.proposal,
+        message: result.message,
+        document: result.document,
+      });
+      queueResumeEditAutoPdfRegeneration(
+        "POST /api/jobs/:id/chat/messages/:messageId/resume-edit/revert",
+      );
     });
   }),
 );

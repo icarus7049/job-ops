@@ -6,6 +6,13 @@ import { buildJobChatPromptContext } from "./ghostwriter-context";
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
+  getCurrentDesignResumeOrNullOnLegacy: vi.fn(),
+}));
+
+// Keeps the DB-backed Resume Studio service out of this unit's module graph.
+vi.mock("./design-resume", () => ({
+  getCurrentDesignResumeOrNullOnLegacy:
+    mocks.getCurrentDesignResumeOrNullOnLegacy,
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -102,6 +109,7 @@ describe("buildJobChatPromptContext", () => {
       makePdfParseResult("PDF context text"),
     );
     vi.mocked(listJobPostApplicationEmailsByIds).mockResolvedValue([]);
+    mocks.getCurrentDesignResumeOrNullOnLegacy.mockResolvedValue(null);
     vi.mocked(getSetting).mockResolvedValue(null);
     vi.mocked(getWritingStyle).mockResolvedValue({
       tone: "professional",
@@ -721,5 +729,79 @@ describe("buildJobChatPromptContext", () => {
       code: "NOT_FOUND",
       status: 404,
     } satisfies Partial<AppError>);
+  });
+
+  describe("resume context", () => {
+    function mockResume(resumeJson: unknown, revision = 3) {
+      const job = createJob({ id: "job-resume-1" });
+      vi.mocked(getJobById).mockResolvedValue(job);
+      mocks.getCurrentDesignResumeOrNullOnLegacy.mockResolvedValue({
+        id: "design-resume-1",
+        revision,
+        updatedAt: "2026-09-14T10:00:00.000Z",
+        resumeJson,
+      });
+      return job;
+    }
+
+    it("is null when no Resume Studio document exists", async () => {
+      const job = createJob({ id: "job-resume-0" });
+      vi.mocked(getJobById).mockResolvedValue(job);
+      mocks.getCurrentDesignResumeOrNullOnLegacy.mockResolvedValue(null);
+
+      const context = await buildJobChatPromptContext(job.id);
+      expect(context.resume).toBeNull();
+    });
+
+    it("carries the complete resume document verbatim with its revision", async () => {
+      const resumeJson = {
+        basics: { name: "Ada Lovelace" },
+        sections: {
+          experience: {
+            items: [
+              { company: "Analytical Engines", position: "Lead" },
+              { company: "Bernoulli Labs", position: "Researcher" },
+            ],
+          },
+        },
+      };
+      const job = mockResume(resumeJson, 9);
+
+      const context = await buildJobChatPromptContext(job.id);
+
+      expect(context.resume).toEqual({
+        documentId: "design-resume-1",
+        revision: 9,
+        updatedAt: "2026-09-14T10:00:00.000Z",
+        resumeJson: JSON.stringify(resumeJson),
+      });
+      // Nothing is dropped: the reduced profile snapshot caps experience at 5
+      // items, but the edit path needs every index to resolve.
+      expect(JSON.parse(context.resume?.resumeJson ?? "{}")).toEqual(
+        resumeJson,
+      );
+    });
+
+    it("drops an oversized resume instead of truncating it", async () => {
+      const job = mockResume({
+        basics: { name: "Ada" },
+        filler: "x".repeat(130_000),
+      });
+
+      const context = await buildJobChatPromptContext(job.id);
+      expect(context.resume).toBeNull();
+    });
+
+    it("degrades to plain chat when the resume cannot be loaded", async () => {
+      const job = createJob({ id: "job-resume-err" });
+      vi.mocked(getJobById).mockResolvedValue(job);
+      mocks.getCurrentDesignResumeOrNullOnLegacy.mockRejectedValue(
+        new Error("resume store unavailable"),
+      );
+
+      const context = await buildJobChatPromptContext(job.id);
+      expect(context.resume).toBeNull();
+      expect(context.jobSnapshot).toBeTruthy();
+    });
   });
 });

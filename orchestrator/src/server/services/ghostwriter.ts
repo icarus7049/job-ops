@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   badRequest,
   conflict,
@@ -19,15 +20,18 @@ import {
   GHOSTWRITER_NOTE_CONTEXT_MAX_SELECTED,
   normalizeGhostwriterSelectedNoteIds,
 } from "@shared/ghostwriter-note-context.js";
+import { normalizeGhostwriterResumeEditDraft } from "@shared/ghostwriter-resume-edit.js";
 import type {
   BranchInfo,
   JobChatImageAttachment,
   JobChatMessage,
   JobChatRun,
 } from "@shared/types";
+import type { GhostwriterResumeEditProposalRecord } from "../repositories/ghostwriter";
 import * as jobChatRepo from "../repositories/ghostwriter";
 import * as jobDocumentsRepo from "../repositories/job-documents";
 import * as jobsRepo from "../repositories/jobs";
+import type { JobChatPromptContext } from "./ghostwriter-context";
 import {
   buildJobChatPromptContext,
   canUseJobDocumentForGhostwriterContext,
@@ -69,21 +73,108 @@ const openRouterImageCapabilityCache = new Map<
   { reason: string | null | undefined; expiresAt: number }
 >();
 
+const RESPONSE_PROPERTY = {
+  type: "string",
+  description:
+    "The direct user-facing reply in plain text or Markdown. Do not serialize JSON into this string unless the user explicitly asks for JSON.",
+} as const;
+
 const CHAT_RESPONSE_SCHEMA: JsonSchemaDefinition = {
   name: "job_chat_response",
   schema: {
     type: "object",
     properties: {
-      response: {
-        type: "string",
-        description:
-          "The direct user-facing reply in plain text or Markdown. Do not serialize JSON into this string unless the user explicitly asks for JSON.",
-      },
+      response: RESPONSE_PROPERTY,
     },
     required: ["response"],
     additionalProperties: false,
   },
 };
+
+/**
+ * Response schema used only when the full resume is in context.
+ *
+ * Providers send this with `strict: true`, which requires every property to be
+ * listed in `required` and forbids free-form values. "Optional" is therefore
+ * modelled as an explicit `null` branch, and each edit carries its replacement
+ * value as `valueJson` — a JSON-encoded string the server parses — because a
+ * strict schema cannot describe an arbitrary JSON value.
+ */
+const CHAT_RESPONSE_WITH_RESUME_EDIT_SCHEMA: JsonSchemaDefinition = {
+  name: "job_chat_response_with_resume_edit",
+  schema: {
+    type: "object",
+    properties: {
+      response: RESPONSE_PROPERTY,
+      resumeEdit: {
+        anyOf: [
+          { type: "null" },
+          {
+            type: "object",
+            properties: {
+              summary: {
+                type: "string",
+                description:
+                  "One sentence describing the change set as a whole.",
+              },
+              edits: {
+                type: "array",
+                description:
+                  "The individual changes. Keep this list as small as the request allows.",
+                items: {
+                  type: "object",
+                  properties: {
+                    op: {
+                      type: "string",
+                      enum: ["add", "replace", "remove"],
+                      description: "JSON Patch operation.",
+                    },
+                    path: {
+                      type: "string",
+                      description:
+                        "RFC 6901 JSON Pointer into the resume document, for example /sections/experience/items/0/description. Use /- to append to an array.",
+                    },
+                    valueJson: {
+                      type: "string",
+                      description:
+                        'The replacement value encoded as a JSON string, for example "\\"Senior Engineer\\"" or a full JSON object. Use an empty string for remove.',
+                    },
+                    reason: {
+                      type: "string",
+                      description:
+                        "Why this specific edit is proposed, in one sentence the user can judge.",
+                    },
+                  },
+                  required: ["op", "path", "valueJson", "reason"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["summary", "edits"],
+            additionalProperties: false,
+          },
+        ],
+        description:
+          "Proposed resume changes, or null when the turn does not call for editing the resume.",
+      },
+    },
+    required: ["response", "resumeEdit"],
+    additionalProperties: false,
+  },
+};
+
+const RESUME_EDIT_PROTOCOL_PROMPT = `
+Resume editing protocol:
+- The message above contains the user's complete current resume document as JSON. Treat it as the single source of truth about their resume.
+- Set "resumeEdit" to null unless the user is explicitly asking you to change, add, remove, rewrite, or improve something in their resume. Answering questions, drafting cover letters, and giving advice all use "resumeEdit": null.
+- When you do propose changes, keep writing your normal reply in "response". The reply must stand on its own and must not repeat the raw JSON.
+- Every edit needs a JSON Pointer "path" that already resolves in the document above. Count array indexes from the document; do not guess.
+- Use "replace" to change an existing value, "add" with a trailing /- to append to an array, and "remove" to delete an array entry.
+- "valueJson" must be the new value encoded as JSON: a quoted string for text fields, or a complete JSON object for a new section item that matches the shape of the existing items.
+- Give each edit a "reason" the user can evaluate on its own, grounded in the job description or their stated goal.
+- Never propose edits that invent employers, titles, dates, degrees, or metrics that are not already in the resume or supplied by the user.
+- Your proposal is staged for review. Nothing is written to the resume unless the user approves it, so do not claim the resume has been updated.
+`.trim();
 
 function estimateTokenCount(value: string): number {
   if (!value) return 0;
@@ -684,6 +775,61 @@ export async function listMessagesForJob(input: {
   };
 }
 
+/**
+ * Persist a model-proposed resume change set against the assistant message.
+ *
+ * The proposal is only ever staged: `baseRevision` is stamped from the
+ * revision the server actually read, never from anything the model returned,
+ * so a stale or fabricated revision cannot slip past the conflict check at
+ * apply time. A malformed proposal is dropped and the turn degrades to plain
+ * chat rather than failing the user's reply.
+ *
+ * Returns null when there is nothing to stage, which leaves the plain-chat
+ * path exactly as it was: no extra write, no extra read.
+ */
+async function stageResumeEditProposal(input: {
+  jobId: string;
+  messageId: string;
+  resume: JobChatPromptContext["resume"];
+  draft: unknown;
+}): Promise<JobChatMessage | null> {
+  if (!input.resume) return null;
+
+  const normalized = normalizeGhostwriterResumeEditDraft(input.draft);
+  if (!normalized) return null;
+
+  if (!normalized.ok) {
+    logger.warn("Discarded malformed Ghostwriter resume edit proposal", {
+      jobId: input.jobId,
+      messageId: input.messageId,
+      reason: normalized.reason,
+    });
+    return null;
+  }
+
+  const record: GhostwriterResumeEditProposalRecord = {
+    id: randomUUID(),
+    baseRevision: input.resume.revision,
+    summary: normalized.summary,
+    edits: normalized.edits,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    resolvedAt: null,
+    appliedRevision: null,
+    previousResumeJson: null,
+  };
+
+  logger.info("Staged Ghostwriter resume edit proposal", {
+    jobId: input.jobId,
+    messageId: input.messageId,
+    proposalId: record.id,
+    baseRevision: record.baseRevision,
+    editCount: record.edits.length,
+  });
+
+  return jobChatRepo.saveResumeEditProposalRecord(input.messageId, record);
+}
+
 async function runAssistantReply(
   options: GenerateReplyOptions,
 ): Promise<{ runId: string; messageId: string; message: string }> {
@@ -774,7 +920,10 @@ async function runAssistantReply(
       allowCliProviders: llmConfig.allowCliProviders,
     });
 
-    const llmResult = await llm.callJson<{ response: string }>({
+    const llmResult = await llm.callJson<{
+      response: string;
+      resumeEdit?: unknown;
+    }>({
       model: llmConfig.model,
       messages: [
         {
@@ -813,13 +962,27 @@ async function runAssistantReply(
               },
             ]
           : []),
+        ...(context.resume
+          ? [
+              {
+                role: "system" as const,
+                content: `Current Resume Document (Reactive Resume v5 JSON, revision ${context.resume.revision}):\n${context.resume.resumeJson}`,
+              },
+              {
+                role: "system" as const,
+                content: RESUME_EDIT_PROTOCOL_PROMPT,
+              },
+            ]
+          : []),
         ...history,
         {
           role: "user",
           content: buildUserPromptContent(options.prompt, options.attachments),
         },
       ],
-      jsonSchema: CHAT_RESPONSE_SCHEMA,
+      jsonSchema: context.resume
+        ? CHAT_RESPONSE_WITH_RESUME_EDIT_SCHEMA
+        : CHAT_RESPONSE_SCHEMA,
       maxRetries: 1,
       retryDelayMs: 300,
       jobId: options.jobId,
@@ -887,6 +1050,13 @@ async function runAssistantReply(
       },
     );
 
+    const stagedMessage = await stageResumeEditProposal({
+      jobId: options.jobId,
+      messageId: assistantMessage.id,
+      resume: context.resume,
+      draft: llmResult.data.resumeEdit,
+    });
+
     await jobChatRepo.completeRun(run.id, {
       status: "completed",
     });
@@ -894,7 +1064,7 @@ async function runAssistantReply(
     await settleGhostwriterUsage(options.usageReservation, 1);
     options.stream?.onCompleted({
       runId: run.id,
-      message: completedMessage,
+      message: stagedMessage ?? completedMessage,
     });
 
     return {

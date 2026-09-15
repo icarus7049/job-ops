@@ -35,6 +35,53 @@ export interface JobChatThread {
   selectedDocumentIds: string[];
 }
 
+export const GHOSTWRITER_RESUME_EDIT_OPS = [
+  "add",
+  "replace",
+  "remove",
+] as const;
+export type GhostwriterResumeEditOp =
+  (typeof GHOSTWRITER_RESUME_EDIT_OPS)[number];
+
+export const GHOSTWRITER_RESUME_EDIT_PROPOSAL_STATUSES = [
+  "pending",
+  "applied",
+  "rejected",
+  "reverted",
+] as const;
+export type GhostwriterResumeEditProposalStatus =
+  (typeof GHOSTWRITER_RESUME_EDIT_PROPOSAL_STATUSES)[number];
+
+/** A single staged change to the Resume Studio document. */
+export interface GhostwriterResumeEdit {
+  op: GhostwriterResumeEditOp;
+  /** JSON Pointer into the Resume Studio document. Never the root pointer. */
+  path: string;
+  /** Replacement value for `add`/`replace`. Always absent for `remove`. */
+  value?: unknown;
+  /** Why this specific edit is proposed. Shown next to the edit in the UI. */
+  reason: string;
+}
+
+/**
+ * A Ghostwriter-drafted resume change set. Proposals are always staged: they
+ * are never applied to the Resume Studio document until the user approves them.
+ */
+export interface GhostwriterResumeEditProposal {
+  id: string;
+  /** Resume Studio revision the edits were drafted against. */
+  baseRevision: number;
+  summary: string;
+  edits: GhostwriterResumeEdit[];
+  status: GhostwriterResumeEditProposalStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+  /** Revision produced by applying this proposal. */
+  appliedRevision: number | null;
+  /** True while a stored pre-apply snapshot can still restore the document. */
+  canRevert: boolean;
+}
+
 export interface JobChatMessage {
   id: string;
   threadId: string;
@@ -49,6 +96,8 @@ export interface JobChatMessage {
   parentMessageId: string | null;
   activeChildId: string | null;
   attachments: JobChatImageAttachment[];
+  /** Staged resume change set awaiting explicit user approval, if any. */
+  resumeEditProposal: GhostwriterResumeEditProposal | null;
   createdAt: string;
   updatedAt: string;
 }

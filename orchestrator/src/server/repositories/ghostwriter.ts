@@ -3,6 +3,10 @@ import { normalizeGhostwriterSelectedDocumentIds } from "@shared/ghostwriter-doc
 import { normalizeGhostwriterSelectedEmailIds } from "@shared/ghostwriter-email-context.js";
 import { normalizeGhostwriterSelectedNoteIds } from "@shared/ghostwriter-note-context.js";
 import type {
+  DesignResumeJson,
+  GhostwriterResumeEdit,
+  GhostwriterResumeEditProposal,
+  GhostwriterResumeEditProposalStatus,
   JobChatImageAttachment,
   JobChatMessage,
   JobChatMessageRole,
@@ -115,6 +119,89 @@ function mapThread(row: typeof jobChatThreads.$inferSelect): JobChatThread {
   };
 }
 
+/**
+ * Stored form of a resume edit proposal.
+ *
+ * `previousResumeJson` is the pre-apply Resume Studio snapshot. It never leaves
+ * the server: it exists so an applied proposal can be reverted through the
+ * ordinary design-resume document PATCH, and shipping a whole resume back on
+ * every chat message poll would be wasteful.
+ */
+export type GhostwriterResumeEditProposalRecord = {
+  id: string;
+  baseRevision: number;
+  summary: string;
+  edits: GhostwriterResumeEdit[];
+  status: GhostwriterResumeEditProposalStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+  appliedRevision: number | null;
+  previousResumeJson: DesignResumeJson | null;
+};
+
+function parseResumeEditProposalRecord(
+  value: string | null,
+): GhostwriterResumeEditProposalRecord | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const record = parsed as Partial<GhostwriterResumeEditProposalRecord>;
+    if (
+      typeof record.id !== "string" ||
+      typeof record.baseRevision !== "number" ||
+      !Array.isArray(record.edits) ||
+      typeof record.status !== "string"
+    ) {
+      return null;
+    }
+    return {
+      id: record.id,
+      baseRevision: record.baseRevision,
+      summary: typeof record.summary === "string" ? record.summary : "",
+      edits: record.edits as GhostwriterResumeEdit[],
+      status: record.status as GhostwriterResumeEditProposalStatus,
+      createdAt:
+        typeof record.createdAt === "string"
+          ? record.createdAt
+          : new Date(0).toISOString(),
+      resolvedAt:
+        typeof record.resolvedAt === "string" ? record.resolvedAt : null,
+      appliedRevision:
+        typeof record.appliedRevision === "number"
+          ? record.appliedRevision
+          : null,
+      previousResumeJson:
+        record.previousResumeJson &&
+        typeof record.previousResumeJson === "object"
+          ? (record.previousResumeJson as DesignResumeJson)
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function toPublicResumeEditProposal(
+  record: GhostwriterResumeEditProposalRecord | null,
+): GhostwriterResumeEditProposal | null {
+  if (!record) return null;
+  return {
+    id: record.id,
+    baseRevision: record.baseRevision,
+    summary: record.summary,
+    edits: record.edits,
+    status: record.status,
+    createdAt: record.createdAt,
+    resolvedAt: record.resolvedAt,
+    appliedRevision: record.appliedRevision,
+    canRevert:
+      record.status === "applied" && Boolean(record.previousResumeJson),
+  };
+}
+
 function mapMessage(row: typeof jobChatMessages.$inferSelect): JobChatMessage {
   return {
     id: row.id,
@@ -130,6 +217,9 @@ function mapMessage(row: typeof jobChatMessages.$inferSelect): JobChatMessage {
     parentMessageId: row.parentMessageId,
     activeChildId: row.activeChildId,
     attachments: parseImageAttachments(row.attachments),
+    resumeEditProposal: toPublicResumeEditProposal(
+      parseResumeEditProposalRecord(row.resumeEditProposal),
+    ),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -383,6 +473,7 @@ export async function createMessage(input: {
     replacesMessageId: input.replacesMessageId ?? null,
     parentMessageId: input.parentMessageId ?? null,
     attachments: JSON.stringify(input.attachments ?? []),
+    resumeEditProposal: null,
     createdAt: now,
     updatedAt: now,
   });
@@ -423,6 +514,36 @@ export async function updateMessage(
     await touchThread(message.threadId, now);
   }
   return message;
+}
+
+/**
+ * Read the full stored proposal, including the server-only pre-apply snapshot.
+ */
+export async function getResumeEditProposalRecord(
+  messageId: string,
+): Promise<GhostwriterResumeEditProposalRecord | null> {
+  const [row] = await db
+    .select({ resumeEditProposal: jobChatMessages.resumeEditProposal })
+    .from(jobChatMessages)
+    .where(and(messagesScopeFilter(), eq(jobChatMessages.id, messageId)));
+  return row ? parseResumeEditProposalRecord(row.resumeEditProposal) : null;
+}
+
+export async function saveResumeEditProposalRecord(
+  messageId: string,
+  record: GhostwriterResumeEditProposalRecord | null,
+): Promise<JobChatMessage | null> {
+  const now = new Date().toISOString();
+
+  await db
+    .update(jobChatMessages)
+    .set({
+      resumeEditProposal: record ? JSON.stringify(record) : null,
+      updatedAt: now,
+    })
+    .where(and(messagesScopeFilter(), eq(jobChatMessages.id, messageId)));
+
+  return getMessageById(messageId);
 }
 
 export async function getLatestAssistantMessage(

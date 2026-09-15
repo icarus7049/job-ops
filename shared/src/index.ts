@@ -4,6 +4,7 @@ export * from "./ghostwriter-context-utils";
 export * from "./ghostwriter-document-context";
 export * from "./ghostwriter-email-context";
 export * from "./ghostwriter-note-context";
+export * from "./ghostwriter-resume-edit";
 export * from "./job-document-classification";
 export * from "./language-detection";
 export * from "./location-support";

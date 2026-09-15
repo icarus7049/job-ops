@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
     getSiblingsOf: vi.fn(),
     getChildrenOfMessage: vi.fn(),
     updateThreadContext: vi.fn(),
+    getResumeEditProposalRecord: vi.fn(),
+    saveResumeEditProposalRecord: vi.fn(),
   },
   jobsRepo: {
     getJobById: vi.fn(),
@@ -89,6 +91,8 @@ vi.mock("../repositories/ghostwriter", () => ({
   getChildrenOfMessage: mocks.repo.getChildrenOfMessage,
   setActiveRoot: mocks.repo.setActiveRoot,
   updateThreadContext: mocks.repo.updateThreadContext,
+  getResumeEditProposalRecord: mocks.repo.getResumeEditProposalRecord,
+  saveResumeEditProposalRecord: mocks.repo.saveResumeEditProposalRecord,
 }));
 
 vi.mock("../repositories/jobs", () => ({
@@ -156,6 +160,7 @@ const baseUserMessage: JobChatMessage = {
   parentMessageId: null,
   activeChildId: "assistant-1",
   attachments: [],
+  resumeEditProposal: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -174,6 +179,7 @@ const baseAssistantMessage: JobChatMessage = {
   parentMessageId: "user-1",
   activeChildId: null,
   attachments: [],
+  resumeEditProposal: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
@@ -210,6 +216,7 @@ describe("ghostwriter service", () => {
       selectedNotesSnapshot: "",
       selectedEmailsSnapshot: "",
       selectedDocumentsSnapshot: "",
+      resume: null,
     });
 
     mocks.jobsRepo.listJobNotesByIds.mockResolvedValue([]);
@@ -282,6 +289,10 @@ describe("ghostwriter service", () => {
       siblings: [baseAssistantMessage],
       activeIndex: 0,
     });
+    mocks.repo.getResumeEditProposalRecord.mockResolvedValue(null);
+    mocks.repo.saveResumeEditProposalRecord.mockResolvedValue(
+      baseAssistantMessage,
+    );
     mocks.llmCallJson.mockResolvedValue({
       success: true,
       data: { response: "Thanks for your question." },
@@ -1157,6 +1168,181 @@ describe("ghostwriter service", () => {
     ).rejects.toMatchObject({
       code: "CONFLICT",
       status: 409,
+    });
+  });
+
+  describe("resume edit proposals", () => {
+    const resumeContext = {
+      documentId: "design-resume-1",
+      revision: 7,
+      updatedAt: "2026-09-14T10:00:00.000Z",
+      resumeJson: '{"basics":{"name":"Ada"},"summary":{"content":"<p>Hi</p>"}}',
+    };
+
+    function withResumeContext() {
+      mocks.buildJobChatPromptContext.mockResolvedValue({
+        job: { id: "job-1" },
+        style: {
+          tone: "professional",
+          formality: "medium",
+          constraints: "",
+          doNotUse: "",
+        },
+        systemPrompt: "system prompt",
+        jobSnapshot: '{"job":"snapshot"}',
+        profileSnapshot: "profile snapshot",
+        selectedNotesSnapshot: "",
+        selectedEmailsSnapshot: "",
+        selectedDocumentsSnapshot: "",
+        resume: resumeContext,
+      });
+    }
+
+    it("keeps plain chat untouched when no resume is in context", async () => {
+      mocks.repo.createMessage.mockResolvedValue(baseUserMessage);
+
+      await sendMessageForJob({ jobId: "job-1", content: "hello" });
+
+      const call = mocks.llmCallJson.mock.calls[0][0];
+      expect(call.jsonSchema.name).toBe("job_chat_response");
+      expect(call.jsonSchema.schema.properties).not.toHaveProperty(
+        "resumeEdit",
+      );
+      expect(
+        call.messages.some((message: { content: unknown }) =>
+          String(message.content).includes("Resume editing protocol"),
+        ),
+      ).toBe(false);
+      expect(mocks.repo.saveResumeEditProposalRecord).not.toHaveBeenCalled();
+    });
+
+    it("keeps plain chat untouched when the resume is in context but no edit is proposed", async () => {
+      withResumeContext();
+      mocks.repo.createMessage.mockResolvedValue(baseUserMessage);
+      mocks.llmCallJson.mockResolvedValue({
+        success: true,
+        data: { response: "Here is a cover letter draft.", resumeEdit: null },
+      });
+
+      const result = await sendMessageForJob({
+        jobId: "job-1",
+        content: "write me a cover letter",
+      });
+
+      expect(mocks.repo.saveResumeEditProposalRecord).not.toHaveBeenCalled();
+      expect(result.assistantMessage?.resumeEditProposal ?? null).toBeNull();
+    });
+
+    it("sends the full resume document and the editing schema when a resume exists", async () => {
+      withResumeContext();
+      mocks.repo.createMessage.mockResolvedValue(baseUserMessage);
+
+      await sendMessageForJob({
+        jobId: "job-1",
+        content: "improve my summary",
+      });
+
+      const call = mocks.llmCallJson.mock.calls[0][0];
+      expect(call.jsonSchema.name).toBe("job_chat_response_with_resume_edit");
+      expect(call.jsonSchema.schema.required).toContain("resumeEdit");
+
+      const contents = call.messages.map((message: { content: unknown }) =>
+        String(message.content),
+      );
+      expect(
+        contents.some(
+          (content: string) =>
+            content.includes(resumeContext.resumeJson) &&
+            content.includes("revision 7"),
+        ),
+      ).toBe(true);
+      expect(
+        contents.some((content: string) =>
+          content.includes("Resume editing protocol"),
+        ),
+      ).toBe(true);
+    });
+
+    it("stages a proposal against the server-read revision without applying it", async () => {
+      withResumeContext();
+      mocks.repo.createMessage
+        .mockResolvedValueOnce(baseUserMessage)
+        .mockResolvedValueOnce({ ...baseAssistantMessage, status: "partial" });
+      mocks.llmCallJson.mockResolvedValue({
+        success: true,
+        data: {
+          response: "I drafted a sharper summary.",
+          resumeEdit: {
+            summary: "Sharpen the summary",
+            // A model-supplied revision must never win over the one the
+            // server actually read.
+            baseRevision: 999,
+            edits: [
+              {
+                op: "replace",
+                path: "/summary/content",
+                valueJson: JSON.stringify("<p>Platform engineer</p>"),
+                reason: "Mirrors the platform focus in the job description.",
+              },
+            ],
+          },
+        },
+      });
+
+      await sendMessageForJob({
+        jobId: "job-1",
+        content: "improve my summary",
+      });
+
+      expect(mocks.repo.saveResumeEditProposalRecord).toHaveBeenCalledTimes(1);
+      const [messageId, record] =
+        mocks.repo.saveResumeEditProposalRecord.mock.calls[0];
+      expect(messageId).toBe("assistant-1");
+      expect(record).toMatchObject({
+        baseRevision: 7,
+        status: "pending",
+        summary: "Sharpen the summary",
+        appliedRevision: null,
+        previousResumeJson: null,
+        edits: [
+          {
+            op: "replace",
+            path: "/summary/content",
+            value: "<p>Platform engineer</p>",
+            reason: "Mirrors the platform focus in the job description.",
+          },
+        ],
+      });
+    });
+
+    it("drops a malformed proposal and still returns the reply", async () => {
+      withResumeContext();
+      mocks.repo.createMessage.mockResolvedValue(baseUserMessage);
+      mocks.llmCallJson.mockResolvedValue({
+        success: true,
+        data: {
+          response: "Here is my suggestion.",
+          resumeEdit: {
+            summary: "Broken",
+            edits: [
+              {
+                op: "replace",
+                path: "summary.content",
+                valueJson: '"x"',
+                reason: "bad pointer",
+              },
+            ],
+          },
+        },
+      });
+
+      const result = await sendMessageForJob({
+        jobId: "job-1",
+        content: "improve my summary",
+      });
+
+      expect(mocks.repo.saveResumeEditProposalRecord).not.toHaveBeenCalled();
+      expect(result.assistantMessage).not.toBeNull();
     });
   });
 });

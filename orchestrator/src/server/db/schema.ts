@@ -510,6 +510,11 @@ export const jobChatMessages = sqliteTable(
     parentMessageId: text("parent_message_id"),
     activeChildId: text("active_child_id"),
     attachments: text("attachments").notNull().default("[]"),
+    /**
+     * Staged Ghostwriter resume change set (JSON) awaiting user approval.
+     * Null for every ordinary chat message.
+     */
+    resumeEditProposal: text("resume_edit_proposal"),
     createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
     updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },

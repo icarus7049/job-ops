@@ -1,5 +1,7 @@
 import type {
   BranchInfo,
+  DesignResumeDocument,
+  GhostwriterResumeEditProposal,
   JobChatImageAttachment,
   JobChatMessage,
   JobChatStreamEvent,
@@ -283,6 +285,49 @@ export async function editJobGhostwriterMessage(
       signal: input.signal,
     },
   );
+}
+
+type GhostwriterResumeEditResult = {
+  proposal: GhostwriterResumeEditProposal;
+  message: JobChatMessage;
+  document: DesignResumeDocument | null;
+};
+
+function resumeEditUrl(jobId: string, messageId: string): string {
+  return `/jobs/${jobId}/chat/messages/${encodeURIComponent(messageId)}/resume-edit`;
+}
+
+/**
+ * Write the staged resume changes.
+ *
+ * Only ever called from an explicit user action: the proposal itself never
+ * reaches the resume without this call.
+ */
+export async function applyJobGhostwriterResumeEdit(
+  jobId: string,
+  messageId: string,
+): Promise<GhostwriterResumeEditResult> {
+  return fetchApi(`${resumeEditUrl(jobId, messageId)}/apply`, {
+    method: "POST",
+  });
+}
+
+export async function rejectJobGhostwriterResumeEdit(
+  jobId: string,
+  messageId: string,
+): Promise<GhostwriterResumeEditResult> {
+  return fetchApi(`${resumeEditUrl(jobId, messageId)}/reject`, {
+    method: "POST",
+  });
+}
+
+export async function revertJobGhostwriterResumeEdit(
+  jobId: string,
+  messageId: string,
+): Promise<GhostwriterResumeEditResult> {
+  return fetchApi(`${resumeEditUrl(jobId, messageId)}/revert`, {
+    method: "POST",
+  });
 }
 
 export async function switchJobGhostwriterBranch(

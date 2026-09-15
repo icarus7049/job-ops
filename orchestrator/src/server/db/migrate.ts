@@ -589,6 +589,7 @@ const migrations = [
     parent_message_id TEXT,
     active_child_id TEXT,
     attachments TEXT NOT NULL DEFAULT '[]',
+    resume_edit_proposal TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
@@ -1170,6 +1171,8 @@ const migrations = [
   `ALTER TABLE job_chat_messages ADD COLUMN parent_message_id TEXT`,
   `ALTER TABLE job_chat_messages ADD COLUMN active_child_id TEXT`,
   `ALTER TABLE job_chat_messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`,
+  // Ghostwriter resume edit proposals: staged change sets awaiting approval.
+  `ALTER TABLE job_chat_messages ADD COLUMN resume_edit_proposal TEXT`,
   `ALTER TABLE job_chat_threads ADD COLUMN active_root_message_id TEXT`,
   `ALTER TABLE job_chat_threads ADD COLUMN selected_note_ids TEXT NOT NULL DEFAULT '[]'`,
   `ALTER TABLE job_chat_threads ADD COLUMN selected_email_ids TEXT NOT NULL DEFAULT '[]'`,

@@ -13,6 +13,7 @@ Ghostwriter uses:
 
 - current job description and metadata
 - reduced profile snapshot
+- your complete current resume document from Resume Studio, when one exists
 - selected job notes when you choose them in the composer
 - global writing style settings
 - the configurable Ghostwriter system prompt template from Settings
@@ -54,6 +55,42 @@ Limits:
 - Selected notes contribute up to 12,000 characters total.
 
 The UI shows an `8 note limit` footer when you reach the selection cap. Oversized selected notes show `Trimmed for AI`, and the selector warns when the total selected note content exceeds the context budget.
+
+### Resume review and edits
+
+When Resume Studio holds a resume, Ghostwriter reads that document in full, so
+it can answer questions about your actual resume rather than a summary of it.
+
+Ask it to change something — "tighten my summary for this role", "drop the
+oldest project", "add the skills this posting asks for" — and it can reply with
+a **proposed change set** shown under its answer. Each proposed change lists the
+field it touches, the new value, and why it is suggested.
+
+Nothing is written to your resume when the proposal appears. The change set is
+staged until you act on it:
+
+- `Apply to resume` writes the changes and bumps your resume revision.
+- `Discard` throws the proposal away and leaves the resume untouched.
+- `Undo` appears after applying and restores the exact document from before.
+
+Safety rules:
+
+- Ghostwriter proposes edits only when you ask it to change the resume. Ordinary
+  questions, drafts, and advice never produce a proposal.
+- Each proposal is tied to the resume revision it was drafted against. If the
+  resume changed in between, applying fails with a conflict and the resume is
+  left alone — ask Ghostwriter to redraft against the current resume.
+- Applying goes through the same validated Resume Studio update used by the
+  editor, so a proposal cannot write a structurally invalid resume.
+- Ghostwriter cannot change your resume picture; that stays with Resume Studio.
+- Applying a change refreshes tailored PDFs for `ready` jobs, exactly as editing
+  the resume in Resume Studio does.
+- `Undo` refuses when the resume moved on after the apply, so it cannot silently
+  discard later work.
+
+If your resume is unusually large, Ghostwriter skips the resume context entirely
+rather than reading a partial copy, and the editing feature stays off for that
+conversation.
 
 ### Writing style settings impact
 

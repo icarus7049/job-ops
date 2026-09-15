@@ -4,11 +4,13 @@ import {
 } from "@client/components/ai-assist/AiAssistMessageList";
 import type {
   BranchInfo,
+  GhostwriterResumeEditProposal,
   JobChatImageAttachment,
   JobChatMessage,
 } from "@shared/types";
 import type React from "react";
 import { bucketQueryLength, trackProductEvent } from "@/lib/analytics";
+import { ResumeEditProposalCard } from "./ResumeEditProposalCard";
 
 type MessageListProps = {
   messages: JobChatMessage[];
@@ -22,15 +24,25 @@ type MessageListProps = {
     attachments: JobChatImageAttachment[],
   ) => void;
   onSwitchBranch: (messageId: string) => void;
+  onApplyResumeEdit?: (messageId: string) => Promise<void>;
+  onRejectResumeEdit?: (messageId: string) => Promise<void>;
+  onRevertResumeEdit?: (messageId: string) => Promise<void>;
 };
 
-function toAiAssistMessage(message: JobChatMessage): AiAssistMessage {
+type GhostwriterAiAssistMessage = AiAssistMessage & {
+  resumeEditProposal: GhostwriterResumeEditProposal | null;
+};
+
+function toAiAssistMessage(
+  message: JobChatMessage,
+): GhostwriterAiAssistMessage {
   return {
     id: message.id,
     role: message.role === "user" ? "user" : "assistant",
     content: message.content,
     status: message.status,
     attachments: message.attachments,
+    resumeEditProposal: message.resumeEditProposal,
   };
 }
 
@@ -42,6 +54,9 @@ export const MessageList: React.FC<MessageListProps> = ({
   onRegenerate,
   onEdit,
   onSwitchBranch,
+  onApplyResumeEdit,
+  onRejectResumeEdit,
+  onRevertResumeEdit,
 }) => (
   <AiAssistMessageList
     messages={messages
@@ -60,6 +75,23 @@ export const MessageList: React.FC<MessageListProps> = ({
       trackProductEvent("ghostwriter_response_copied", {
         message_length_bucket: bucketQueryLength(message.content),
       })
+    }
+    renderAssistantActions={(message) =>
+      message.resumeEditProposal ? (
+        <ResumeEditProposalCard
+          proposal={message.resumeEditProposal}
+          disabled={isStreaming}
+          onApply={async () => {
+            await onApplyResumeEdit?.(message.id);
+          }}
+          onReject={async () => {
+            await onRejectResumeEdit?.(message.id);
+          }}
+          onRevert={async () => {
+            await onRevertResumeEdit?.(message.id);
+          }}
+        />
+      ) : null
     }
   />
 );

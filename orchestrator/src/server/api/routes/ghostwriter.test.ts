@@ -13,9 +13,42 @@ const baseMsgFields = {
   parentMessageId: null,
   activeChildId: null,
   attachments: [],
+  resumeEditProposal: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
+
+const stagedProposal = {
+  id: "proposal-1",
+  baseRevision: 4,
+  summary: "Sharpen the summary",
+  edits: [
+    {
+      op: "replace",
+      path: "/summary/content",
+      value: "<p>Platform engineer</p>",
+      reason: "Mirrors the platform focus in the job description.",
+    },
+  ],
+  status: "pending",
+  createdAt: new Date().toISOString(),
+  resolvedAt: null,
+  appliedRevision: null,
+  canRevert: false,
+};
+
+const resumeEditMocks = vi.hoisted(() => ({
+  getResumeEditProposal: vi.fn(),
+  applyResumeEditProposal: vi.fn(),
+  rejectResumeEditProposal: vi.fn(),
+  revertResumeEditProposal: vi.fn(),
+}));
+
+vi.mock("@server/services/ghostwriter-resume-edit", () => resumeEditMocks);
+
+vi.mock("@server/services/auto-pdf-regeneration", () => ({
+  enqueueAutoPdfRegenerationForReadyJobs: vi.fn(async () => undefined),
+}));
 
 vi.mock("@server/services/ghostwriter", () => ({
   listThreads: vi.fn(async () => [
@@ -303,5 +336,97 @@ describe.sequential("Ghostwriter API", () => {
     expect(body.ok).toBe(true);
     expect(body.data.messages.length).toBe(1);
     expect(body.data.branches).toEqual([]);
+  });
+
+  describe("resume edit proposals", () => {
+    const proposalUrl = () =>
+      `${baseUrl}/api/jobs/job-1/chat/messages/assistant-1/resume-edit`;
+
+    beforeEach(() => {
+      resumeEditMocks.getResumeEditProposal.mockResolvedValue({
+        message: { id: "assistant-1", ...baseMsgFields, role: "assistant" },
+        proposal: stagedProposal,
+        document: null,
+      });
+      resumeEditMocks.applyResumeEditProposal.mockResolvedValue({
+        message: { id: "assistant-1", ...baseMsgFields, role: "assistant" },
+        proposal: { ...stagedProposal, status: "applied", appliedRevision: 5 },
+        document: { id: "design-resume-1", revision: 5 },
+      });
+      resumeEditMocks.rejectResumeEditProposal.mockResolvedValue({
+        message: { id: "assistant-1", ...baseMsgFields, role: "assistant" },
+        proposal: { ...stagedProposal, status: "rejected" },
+        document: null,
+      });
+      resumeEditMocks.revertResumeEditProposal.mockResolvedValue({
+        message: { id: "assistant-1", ...baseMsgFields, role: "assistant" },
+        proposal: { ...stagedProposal, status: "reverted" },
+        document: { id: "design-resume-1", revision: 6 },
+      });
+    });
+
+    it("reads a staged proposal without applying it", async () => {
+      const res = await fetch(proposalUrl());
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data.proposal.status).toBe("pending");
+      expect(resumeEditMocks.applyResumeEditProposal).not.toHaveBeenCalled();
+    });
+
+    it("applies a proposal only on an explicit apply request", async () => {
+      const res = await fetch(`${proposalUrl()}/apply`, { method: "POST" });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data.proposal.status).toBe("applied");
+      expect(body.data.document.revision).toBe(5);
+      expect(resumeEditMocks.applyResumeEditProposal).toHaveBeenCalledWith({
+        jobId: "job-1",
+        messageId: "assistant-1",
+      });
+    });
+
+    it("returns 409 when applying against a stale revision", async () => {
+      const { conflict } = await import("@server/infra/errors");
+      resumeEditMocks.applyResumeEditProposal.mockRejectedValue(
+        conflict("Your resume changed after Ghostwriter drafted this edit."),
+      );
+
+      const res = await fetch(`${proposalUrl()}/apply`, { method: "POST" });
+      const body = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("CONFLICT");
+    });
+
+    it("rejects a proposal without touching the resume", async () => {
+      const res = await fetch(`${proposalUrl()}/reject`, { method: "POST" });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data.proposal.status).toBe("rejected");
+      expect(resumeEditMocks.applyResumeEditProposal).not.toHaveBeenCalled();
+    });
+
+    it("reverts an applied proposal", async () => {
+      const res = await fetch(`${proposalUrl()}/revert`, { method: "POST" });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.data.proposal.status).toBe("reverted");
+      expect(body.data.document.revision).toBe(6);
+    });
+
+    it("returns 404 for a message with no staged proposal", async () => {
+      const { notFound } = await import("@server/infra/errors");
+      resumeEditMocks.getResumeEditProposal.mockRejectedValue(
+        notFound("This message has no staged resume edit"),
+      );
+
+      const res = await fetch(proposalUrl());
+      expect(res.status).toBe(404);
+    });
   });
 });
