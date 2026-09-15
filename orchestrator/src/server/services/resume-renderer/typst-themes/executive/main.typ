@@ -132,7 +132,7 @@
   ]
 }
 
-#let bullets-of(entry) = {
+#let bullets-of(entry, project: false) = {
   let bullets = list-of(entry.at("bullets", default: ()))
     .filter(item => text-of(item) != "")
   let has-role-headings = false
@@ -154,7 +154,16 @@
         #emph[#markup-text(clean)]
       ]
     } else {
-      block(breakable: false, above: 0pt, below: 2.5pt)[
+      // A project's description sits directly beneath its name, so it needs an
+      // explicit gap: without `above` the paragraph butts against the name and
+      // the name's descenders collide with the description's first line. An
+      // employer's bullets follow a heading that already carries its own
+      // spacing, so they stay at 0pt.
+      block(
+        breakable: false,
+        above: if project and index == 0 { 4pt } else { 0pt },
+        below: if project { 4pt } else { 2.5pt },
+      )[
         #grid(
           columns: (9.5pt, 1fr),
           column-gutter: 3pt,
@@ -216,7 +225,7 @@
         #v(3pt)
       ]
     ]
-    #bullets-of(entry)
+    #bullets-of(entry, project: project)
   ]
 }
 
