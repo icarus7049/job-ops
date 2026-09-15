@@ -191,9 +191,60 @@ describe("buildJobChatPromptContext", () => {
     expect(context.jobSnapshot).toContain('"id":"job-ctx-1"');
     expect(context.jobSnapshot).not.toContain("<p>");
     expect(context.jobSnapshot).not.toContain("\n");
-    expect(context.jobSnapshot.length).toBeLessThan(6000);
+    expect(context.jobSnapshot.length).toBeLessThan(8000);
     expect(context.profileSnapshot).toContain("Name: Test User");
     expect(context.profileSnapshot).toContain("Skills:");
+  });
+
+  it("keeps a slightly-over-budget tailored summary whole", async () => {
+    // Regression: a 1228-char summary was hard-sliced at 1200 mid-clause, and
+    // the model received "...look..." with no ending, so it invented one and
+    // told the user it had done so. The whole summary must now arrive intact.
+    const summary =
+      `${"Sentence about platform leadership and delivery. ".repeat(30)}` +
+      "The platforms and AI-accessible workflows that make how a company builds look nothing like it does today.";
+    const job = createJob({ id: "job-trunc-fits", tailoredSummary: summary });
+    vi.mocked(getJobById).mockResolvedValue(job);
+    vi.mocked(getProfile).mockResolvedValue({ sections: {} });
+
+    const context = await buildJobChatPromptContext(job.id);
+
+    expect(summary.length).toBeGreaterThan(1200);
+    expect(context.jobSnapshot).toContain("look nothing like it does today.");
+    expect(context.jobSnapshot).not.toContain("[...]");
+  });
+
+  it("truncates over-budget text at a sentence end, never mid-clause", async () => {
+    const job = createJob({
+      id: "job-trunc-cut",
+      // Well past the budget, with sentence breaks available in the window.
+      tailoredSummary: "Alpha sentence stays whole. ".repeat(120),
+    });
+    vi.mocked(getJobById).mockResolvedValue(job);
+    vi.mocked(getProfile).mockResolvedValue({ sections: {} });
+
+    const context = await buildJobChatPromptContext(job.id);
+
+    // Omission is advertised rather than trailing off as "...".
+    expect(context.jobSnapshot).toContain(" [...]");
+    expect(context.jobSnapshot).not.toContain('..."');
+    // The cut lands on a sentence boundary, so the last kept fragment is whole.
+    expect(context.jobSnapshot).toContain("Alpha sentence stays whole. [...]");
+  });
+
+  it("falls back to a whole word when the window has no sentence break", async () => {
+    const job = createJob({
+      id: "job-trunc-words",
+      tailoredSummary: `${"word ".repeat(400)}end`,
+    });
+    vi.mocked(getJobById).mockResolvedValue(job);
+    vi.mocked(getProfile).mockResolvedValue({ sections: {} });
+
+    const context = await buildJobChatPromptContext(job.id);
+
+    // No sentence break exists, so it must cut cleanly between words and still
+    // advertise the omission instead of leaving a half-word.
+    expect(context.jobSnapshot).toContain("word [...]");
   });
 
   it("omits globally excluded projects from Ghostwriter context", async () => {

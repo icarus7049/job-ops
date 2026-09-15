@@ -54,12 +54,16 @@ export type JobChatPromptContext = {
   selectedDocumentsSnapshot: string;
 };
 
-const MAX_JOB_DESCRIPTION = 4000;
-const MAX_PROFILE_SUMMARY = 1200;
+const MAX_JOB_DESCRIPTION = 6000;
+const MAX_JOB_SUITABILITY_REASON = 600;
+const MAX_JOB_TAILORED_SUMMARY = 2000;
+const MAX_JOB_TAILORED_HEADLINE = 300;
+const MAX_JOB_TAILORED_SKILLS = 2000;
+const MAX_PROFILE_SUMMARY = 2000;
 const MAX_SKILLS = 18;
 const MAX_PROJECTS = 6;
 const MAX_EXPERIENCE = 5;
-const MAX_ITEM_TEXT = 320;
+const MAX_ITEM_TEXT = 500;
 const MAX_DOCUMENT_READ_BYTES = 2 * 1024 * 1024;
 
 const STOP_SLOP_GHOSTWRITER_PROMPT = `
@@ -77,11 +81,39 @@ Stop Slop revision rules for Ghostwriter prose:
 - Before answering, revise once for directness, rhythm, trust, authenticity, and density.
 `.trim();
 
+// A truncation marker must advertise omitted content. A bare "..." reads as
+// the author trailing off, and a mid-clause cut leaves the model holding half
+// a sentence it cannot know the end of, which invites it to invent one.
+const TRUNCATION_MARKER = " [...]";
+
+// Truncate without ever ending mid-clause. Prefer the last complete sentence
+// that fits the budget; fall back to the last whole word when the text has no
+// sentence break in the useful part of the window. Both paths keep at least 60%
+// of the budget so a single early period cannot collapse the content.
 function truncate(value: string | null | undefined, max: number): string {
   if (!value) return "";
   const trimmed = value.trim();
   if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max)}...`;
+
+  const window = trimmed.slice(0, max);
+  const minUseful = Math.floor(max * 0.6);
+
+  let cut = -1;
+  const sentenceRe = /[.!?]+(?=\s|$)/g;
+  let match = sentenceRe.exec(window);
+  while (match !== null) {
+    const end = match.index + match[0].length;
+    if (end > max) break;
+    if (end >= minUseful) cut = end;
+    match = sentenceRe.exec(window);
+  }
+
+  if (cut === -1) {
+    const lastSpace = window.lastIndexOf(" ");
+    cut = lastSpace >= minUseful ? lastSpace : window.length;
+  }
+
+  return `${trimmed.slice(0, cut).trimEnd()}${TRUNCATION_MARKER}`;
 }
 
 function compactJoin(parts: Array<string | null | undefined>): string {
@@ -109,10 +141,16 @@ function buildJobSnapshot(job: Job): string {
       jobUrl: job.jobUrl,
       applicationLink: job.applicationLink,
       suitabilityScore: job.suitabilityScore,
-      suitabilityReason: truncate(job.suitabilityReason, 600),
-      tailoredSummary: truncate(job.tailoredSummary, 1200),
-      tailoredHeadline: truncate(job.tailoredHeadline, 300),
-      tailoredSkills: truncate(job.tailoredSkills, 1200),
+      suitabilityReason: truncate(
+        job.suitabilityReason,
+        MAX_JOB_SUITABILITY_REASON,
+      ),
+      tailoredSummary: truncate(job.tailoredSummary, MAX_JOB_TAILORED_SUMMARY),
+      tailoredHeadline: truncate(
+        job.tailoredHeadline,
+        MAX_JOB_TAILORED_HEADLINE,
+      ),
+      tailoredSkills: truncate(job.tailoredSkills, MAX_JOB_TAILORED_SKILLS),
       jobDescription: truncate(
         stripHtmlTags(job.jobDescription ?? ""),
         MAX_JOB_DESCRIPTION,
