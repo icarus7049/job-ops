@@ -23,7 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     libgtk-3-0 libgtk-3-common \
     libdbus-glib-1-2 libxt6 libx11-xcb1 libasound2 \
-    curl && \
+    curl \
+    fonts-liberation \
+    fonts-crosextra-caladea && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Install Codex CLI for local app-server based inference.

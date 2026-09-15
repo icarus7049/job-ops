@@ -5,8 +5,12 @@
 #let ink-mute = rgb("#5b6169")
 #let accent = rgb("#22466a")
 #let rule = rgb("#c3c9d0")
-#let sans = "DejaVu Sans"
-#let serif = "Libertinus Serif"
+// Metric-compatible stand-ins for the reference design's Helvetica/Arial and
+// Georgia. Liberation Sans matches Arial metrics; Caladea is Cambria-metric
+// (Georgia has no free metric clone, so Caladea is the closest serif). Both are
+// installed in the production image via the Dockerfile font packages.
+#let sans = "Liberation Sans"
+#let serif = "Caladea"
 
 // Tracks the employer whose entries are currently being laid out, so a page
 // that continues mid-employer can name it in the running header instead of
@@ -36,17 +40,70 @@
   }
 }
 
+// Section rhythm mirrors the reference CSS: h2 { margin:0 0 5pt;
+// padding-bottom:2.5pt; border-bottom:0.75pt }. Typst's `line` carries its own
+// surrounding spacing, so the explicit `v()` values are smaller than the CSS
+// numbers to land on the same optical gaps — the old 8pt/5pt pair stacked on
+// top of that implicit space and is what produced the oversized gap the human
+// flagged between heading, rule, and following paragraph.
 #let section-heading(title) = [
   #block(breakable: false)[
-    #v(8pt)
+    #v(6pt)
     #text(font: sans, size: 9.5pt, weight: "bold", tracking: 1.05pt, fill: accent)[#upper(title)]
-    #v(2.5pt)
+    #v(1.5pt)
     #line(length: 100%, stroke: 0.75pt + rule)
-    #v(5pt)
+    #v(2pt)
   ]
 ]
 
 #let is-role-heading(value) = value.trim().starts-with("#strong[")
+
+// Early-career emphasis. The reference design gives pre-2012 history its own
+// lighter visual weight so the recent executive record leads. Roles whose date
+// segment starts before this year render compact and muted instead of in the
+// accent colour, which is how the human's "early career is also highlighted"
+// ask is satisfied without inventing any content the canonical resume lacks.
+#let early-career-from = 2012
+#let first-year-of(text) = {
+  let years = ()
+  let digits = ""
+  for ch in text {
+    if ch >= "0" and ch <= "9" {
+      digits += ch
+    } else {
+      if digits.len() == 4 { years.push(int(digits)) }
+      digits = ""
+    }
+  }
+  if digits.len() == 4 { years.push(int(digits)) }
+  if years.len() == 0 { none } else { years.first() }
+}
+#let is-early(datetext) = {
+  let year = first-year-of(datetext)
+  year != none and year < early-career-from
+}
+
+// Employers are judged on their LAST year, not their first: Fidelity's
+// "Mar 2005 - May 2026" must not read as early career merely because it began
+// in 2005 — it is a current employer with a long tenure.
+#let last-year-of(text) = {
+  let years = ()
+  let digits = ""
+  for ch in text {
+    if ch >= "0" and ch <= "9" {
+      digits += ch
+    } else {
+      if digits.len() == 4 { years.push(int(digits)) }
+      digits = ""
+    }
+  }
+  if digits.len() == 4 { years.push(int(digits)) }
+  if years.len() == 0 { none } else { years.last() }
+}
+#let is-early-entry(datetext) = {
+  let year = last-year-of(datetext)
+  year != none and year < early-career-from
+}
 
 #let role-heading(value) = {
   let clean = value.trim()
@@ -54,14 +111,23 @@
   let parts = inner.split(" | ")
   let role-title = parts.first()
   let role-date = if parts.len() > 1 { parts.last() } else { "" }
+  let early = is-early(role-date)
 
-  block(breakable: false, above: 5pt, below: 3pt)[
+  block(breakable: false, above: if early { 3pt } else { 5pt }, below: if early { 2pt } else { 3pt })[
     #grid(
       columns: (1fr, auto),
       column-gutter: 12pt,
       align: (left + horizon, right + horizon),
-      [#text(font: sans, size: 10pt, weight: "bold", fill: accent)[#markup-text(role-title)]],
-      [#if role-date != "" [#text(font: sans, size: 9pt, fill: ink-soft)[#markup-text(role-date)]]],
+      // Early-career roles drop to a compact, muted treatment so the recent
+      // executive roles keep visual primacy.
+      [#text(
+        font: sans,
+        size: if early { 9pt } else { 10pt },
+        weight: "bold",
+        tracking: if early { 0pt } else { 0.25pt },
+        fill: if early { ink-soft } else { accent },
+      )[#markup-text(role-title)]],
+      [#if role-date != "" [#text(font: sans, size: if early { 8.5pt } else { 9pt }, fill: ink-soft)[#markup-text(role-date)]]],
     )
   ]
 }
@@ -114,6 +180,10 @@
     .filter(value => value != "")
   let subline = if subline-parts.len() == 0 { "" } else { subline-parts.join(" · ") }
 
+  // Pre-2012 employers render compact and muted so the recent executive record
+  // keeps visual primacy over early-career history.
+  let entry-early = not project and is-early-entry(date)
+
   // Group separation must exceed the internal title→subline gap, or the
   // subline reads as a heading for the NEXT entry rather than as attribution
   // for its own.
@@ -126,10 +196,10 @@
         align: (left + horizon, right + horizon),
         [#text(
           font: sans,
-          size: if project { 9.5pt } else { 10.5pt },
+          size: if project { 9.5pt } else if entry-early { 9.5pt } else { 10.5pt },
           weight: "bold",
-          tracking: if project { 0pt } else { 0.25pt },
-          fill: ink,
+          tracking: if project or entry-early { 0pt } else { 0.25pt },
+          fill: if entry-early { ink-soft } else { ink },
         )[#link-or-text(title, url)]#if project and subline.trim() != "" [
           // Inline attribution. Stacked, the issuer sits equidistant between
           // its own credential and the next one, so proximity cannot say which
@@ -154,6 +224,28 @@
   if entries.len() > 0 [
     #section-heading(title-of(key, fallback))
     #for entry in entries [#entry-block(entry, project: project, track: track)]
+  ]
+}
+
+// Experience is split by era so early-career history carries its own heading,
+// matching the reference design ("Early Career — Software Engineering").
+// Entries arrive reverse-chronological, so the early block is the trailing run;
+// if the data is ever re-ordered the count still selects the right entries.
+#let experience-sections(entries) = {
+  if entries.len() == 0 { return }
+  let early-count = 0
+  for entry in entries {
+    if is-early-entry(text-of-item(entry, "date")) { early-count += 1 }
+  }
+  let main-entries = entries.slice(0, entries.len() - early-count)
+  let early-entries = entries.slice(entries.len() - early-count)
+  if main-entries.len() > 0 [
+    #section-heading(title-of("experience", "Professional Experience"))
+    #for entry in main-entries [#entry-block(entry, track: true)]
+  ]
+  if early-entries.len() > 0 [
+    #section-heading(title-of("earlyCareer", "Early Career — Software Engineering"))
+    #for entry in early-entries [#entry-block(entry, track: true)]
   ]
 }
 
@@ -274,7 +366,7 @@
   ]
 ]
 
-#entries-section("experience", "Professional Experience", list-of(source.at("experience", default: ())), track: true)
+#experience-sections(list-of(source.at("experience", default: ())))
 #entries-section("projects", "Selected Projects", list-of(source.at("projects", default: ())), project: true)
 
 #line-section("skills", "Technology", technology-groups, group => [
