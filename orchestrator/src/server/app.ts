@@ -437,6 +437,11 @@ export function createApp() {
   // keep a larger JSON limit scoped to this endpoint to allow the maximum
   // validated payload through to route-level validation.
   app.use("/api/jobs/:id/chat", express.json({ limit: "12mb" }));
+  // Job documents are currently accepted as base64 JSON. A normal PDF expands
+  // by roughly one third when base64-encoded, so the application-wide 100kb
+  // parser limit can reject otherwise small resumes before the route sees
+  // them. Keep this larger limit scoped to document uploads.
+  app.use("/api/jobs/:id/documents", express.json({ limit: "4mb" }));
   app.use(express.json());
 
   // Logging middleware
